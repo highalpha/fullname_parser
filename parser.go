@@ -8,12 +8,15 @@ import (
 )
 
 type ParsedName struct {
-	Title  string
-	First  string
-	Middle string
-	Last   string
-	Nick   string
-	Suffix string
+	Title      string
+	First      string
+	Middle     string
+	Last       string
+	Nick       string
+	Suffix     string
+	nameParts  []string
+	nameCommas []bool
+	rawName    string
 }
 
 var (
@@ -63,48 +66,57 @@ var (
 		"vice admiral", "viscount", "viscountess", "wg cdr"}
 
 	conjunctionList = []string{"&", "and", "et", "e", "of", "the", "und", "y"}
+
+	nickNameRE  = regexp.MustCompile(`\s?[\'\"\(\[]([^\[\]\)\)\'\"]+)[\'\"\)\]]`)
+	splitNameRE = regexp.MustCompile(`[\s\p{Zs}]{2,}`)
 )
 
-var (
-	nameParts  []string
-	nameCommas []bool
-)
-
-func ParseFullname(fullname string) (parsedName ParsedName) {
+func ParseFullname(fullname string) ParsedName {
 	log.Debug("Start parsing fullname: ", fullname)
 
+	parsedName := &ParsedName{
+		rawName: fullname,
+	}
+
+	parsedName.Parse()
+
+	return *parsedName
+}
+
+func (parsedName *ParsedName) Parse() {
 	//nicknames: remove and store
-	nicknames := findNicknames(&fullname)
+	nicknames := parsedName.findNicknames()
 	parsedName.Nick = strings.Join(nicknames, ",")
 
 	//split name to parts and store commas
-	splitName(fullname)
+	parsedName.splitName()
 
 	//suffix: remove and store
-	if len(nameParts) > 1 {
-		suffixes := findSuffixes()
+	if len(parsedName.nameParts) > 1 {
+		suffixes := parsedName.findSuffixes()
 		parsedName.Suffix = strings.Join(suffixes, ", ")
 	}
 
 	//titles: remove and store
-	if len(nameParts) > 1 {
-		titles := findTitles()
+	if len(parsedName.nameParts) > 1 {
+		titles := parsedName.findTitles()
 		parsedName.Title = strings.Join(titles, ", ")
 	}
+	log.Debugf("num parts: %d", len(parsedName.nameParts))
 
 	// Join name prefixes to following names
-	if len(nameParts) > 1 {
-		joinPrefixes()
+	if len(parsedName.nameParts) > 1 {
+		parsedName.joinPrefixes()
 	}
 
 	// Join conjunctions to surrounding names
-	if len(nameParts) > 1 {
-		joinConjunctions()
+	if len(parsedName.nameParts) > 1 {
+		parsedName.joinConjunctions()
 	}
 
 	// Suffix: remove and store items after extra commas as suffixes
-	if len(nameParts) > 1 {
-		extraSuffixes := findExtraSuffixes()
+	if len(parsedName.nameParts) > 1 {
+		extraSuffixes := parsedName.findExtraSuffixes()
 		if len(extraSuffixes) > 0 {
 			if parsedName.Suffix != "" {
 				parsedName.Suffix += ", " + strings.Join(extraSuffixes, ", ")
@@ -115,30 +127,29 @@ func ParseFullname(fullname string) (parsedName ParsedName) {
 	}
 
 	// Last name: remove and store last name
-	if len(nameParts) > 0 {
-		parsedName.Last = findLastname()
+	if len(parsedName.nameParts) > 0 {
+		parsedName.Last = parsedName.findLastname()
 	}
 
 	// First name: remove and store first part as first name
-	if len(nameParts) > 0 {
-		parsedName.First = findFirstname()
+	if len(parsedName.nameParts) > 0 {
+		parsedName.First = parsedName.findFirstname()
 	}
 
 	// Middle name: store all remaining parts as middle name
-	if len(nameParts) > 0 {
-		parsedName.Middle = findMiddlename()
+	if len(parsedName.nameParts) > 0 {
+		parsedName.Middle = parsedName.findMiddlename()
 	}
 
 	log.Debugf("Parsing complete: %+v", parsedName)
 	return
 }
 
-func findNicknames(fullname *string) []string {
-	var re = regexp.MustCompile(`\s?[\'\"\(\[]([^\[\]\)\)\'\"]+)[\'\"\)\]]`)
+func (parsedName *ParsedName) findNicknames() []string {
 	var partsFound []string
-	tempString := *fullname
+	tempString := parsedName.rawName
 
-	matches := re.FindAllStringSubmatch(tempString, -1)
+	matches := nickNameRE.FindAllStringSubmatch(tempString, -1)
 	for _, v := range matches {
 		partsFound = append(partsFound, v[1])
 	}
@@ -149,27 +160,27 @@ func findNicknames(fullname *string) []string {
 	for _, v := range matches {
 		tempString = strings.Replace(tempString, v[0], "", -1)
 	}
-	*fullname = tempString
+	parsedName.rawName = tempString
 
-	log.Debug("Cleared fullname: ", *fullname)
+	log.Debug("Cleared fullname: ", tempString)
 	return partsFound
 }
 
-func findSuffixes() []string {
+func (parsedName *ParsedName) findSuffixes() []string {
 	log.Debug("Searching suffixes")
-	return findParts(suffixList)
+	return parsedName.findParts(suffixList)
 }
 
-func findTitles() []string {
+func (parsedName *ParsedName) findTitles() []string {
 	log.Debug("Searching titles")
-	return findParts(titleList)
+	return parsedName.findParts(titleList)
 }
 
-func splitName(fullname string) {
-	log.Debug("Spliting fullname")
-	re := regexp.MustCompile(`[\s\p{Zs}]{2,}`)
-	fullname = re.ReplaceAllLiteralString(fullname, " ")
-	nameParts = strings.Split(strings.TrimSpace(fullname), " ")
+func (parsedName *ParsedName) splitName() {
+	log.Debugf("Spliting fullname: %s", parsedName.rawName)
+	fullname := splitNameRE.ReplaceAllLiteralString(parsedName.rawName, " ")
+	nameParts := strings.Split(strings.TrimSpace(fullname), " ")
+	nameCommas := []bool{}
 	for i, v := range nameParts {
 		nameParts[i] = strings.TrimSpace(v)
 		nameCommas = append(nameCommas, false)
@@ -181,12 +192,14 @@ func splitName(fullname string) {
 
 	log.Debug("Splitted parts: ", nameParts)
 	log.Debug("Splitted commas: ", nameCommas)
+	parsedName.nameParts = nameParts
+	parsedName.nameCommas = nameCommas
 }
 
-func findParts(list []string) []string {
+func (parsedName *ParsedName) findParts(list []string) []string {
 	var partsFound []string
 
-	for _, namePart := range nameParts {
+	for _, namePart := range parsedName.nameParts {
 		if namePart == "" {
 			continue
 		}
@@ -206,127 +219,127 @@ func findParts(list []string) []string {
 
 	for _, partFound := range partsFound {
 		foundIndex := -1
-		for i, namePart := range nameParts {
+		for i, namePart := range parsedName.nameParts {
 			if partFound == namePart {
 				foundIndex = i
 				break
 			}
 		}
 		if foundIndex > -1 {
-			nameParts = append(nameParts[:foundIndex], nameParts[foundIndex+1:]...)
-			if nameCommas[foundIndex] && foundIndex != len(nameCommas)-1 {
-				nameCommas = append(nameCommas[:foundIndex+1], nameCommas[foundIndex+1+1:]...)
+			parsedName.nameParts = append(parsedName.nameParts[:foundIndex], parsedName.nameParts[foundIndex+1:]...)
+			if parsedName.nameCommas[foundIndex] && foundIndex != len(parsedName.nameCommas)-1 {
+				parsedName.nameCommas = append(parsedName.nameCommas[:foundIndex+1], parsedName.nameCommas[foundIndex+1+1:]...)
 			} else {
-				nameCommas = append(nameCommas[:foundIndex], nameCommas[foundIndex+1:]...)
+				parsedName.nameCommas = append(parsedName.nameCommas[:foundIndex], parsedName.nameCommas[foundIndex+1:]...)
 			}
 		}
 	}
 
-	log.Debug("Cleared parts: ", nameParts)
-	log.Debug("Cleared commas: ", nameCommas)
+	log.Debug("Cleared parts: ", parsedName.nameParts)
+	log.Debug("Cleared commas: ", parsedName.nameCommas)
 
 	return partsFound
 }
 
-func joinPrefixes() {
+func (parsedName *ParsedName) joinPrefixes() {
 	log.Debug("Join prefixes")
 
-	if len(nameParts) > 1 {
-		for i := len(nameParts) - 2; i >= 0; i-- {
+	if len(parsedName.nameParts) > 1 {
+		for i := len(parsedName.nameParts) - 2; i >= 0; i-- {
 			for _, pref := range prefixList {
-				if pref == nameParts[i] {
-					nameParts[i] = nameParts[i] + " " + nameParts[i+1]
-					nameParts = append(nameParts[:i+1], nameParts[i+2:]...)
-					nameCommas = append(nameCommas[:i], nameCommas[i+1:]...)
+				if pref == parsedName.nameParts[i] {
+					parsedName.nameParts[i] = parsedName.nameParts[i] + " " + parsedName.nameParts[i+1]
+					parsedName.nameParts = append(parsedName.nameParts[:i+1], parsedName.nameParts[i+2:]...)
+					parsedName.nameCommas = append(parsedName.nameCommas[:i], parsedName.nameCommas[i+1:]...)
 				}
 			}
 		}
 	}
 
-	log.Debug("Prefixes joined: ", strings.Join(nameParts, ","))
-	log.Debug("Cleared commas: ", nameCommas)
+	log.Debug("Prefixes joined: ", strings.Join(parsedName.nameParts, ","))
+	log.Debug("Cleared commas: ", parsedName.nameCommas)
 }
 
-func joinConjunctions() {
+func (parsedName *ParsedName) joinConjunctions() {
 	log.Debug("Join conjunctions")
 
-	if len(nameParts) > 2 {
-		for i := len(nameParts) - 3; i >= 0; i-- {
+	if len(parsedName.nameParts) > 2 {
+		for i := len(parsedName.nameParts) - 3; i >= 0; i-- {
 			for _, conj := range conjunctionList {
-				if conj == nameParts[i+1] {
-					nameParts[i] = nameParts[i] + " " + nameParts[i+1] + " " + nameParts[i+2]
-					nameParts = append(nameParts[:i+1], nameParts[i+3:]...)
-					nameCommas = append(nameCommas[:i], nameCommas[i+2:]...)
+				if conj == parsedName.nameParts[i+1] {
+					parsedName.nameParts[i] = parsedName.nameParts[i] + " " + parsedName.nameParts[i+1] + " " + parsedName.nameParts[i+2]
+					parsedName.nameParts = append(parsedName.nameParts[:i+1], parsedName.nameParts[i+3:]...)
+					parsedName.nameCommas = append(parsedName.nameCommas[:i], parsedName.nameCommas[i+2:]...)
 					i--
 				}
 			}
 		}
 	}
-	log.Debug("Conjunctions joined: ", strings.Join(nameParts, ","))
-	log.Debug("Cleared commas: ", nameCommas)
+	log.Debug("Conjunctions joined: ", strings.Join(parsedName.nameParts, ","))
+	log.Debug("Cleared commas: ", parsedName.nameCommas)
 }
 
-func findExtraSuffixes() (extraSuffixes []string) {
+func (parsedName *ParsedName) findExtraSuffixes() (extraSuffixes []string) {
 	commasCount := 0
-	for _, v := range nameCommas {
+	for _, v := range parsedName.nameCommas {
 		if v {
 			commasCount++
 		}
 	}
 	if commasCount > 1 {
-		for i := len(nameParts) - 1; i >= 2; i-- {
-			if nameCommas[i] {
-				extraSuffixes = append(extraSuffixes, nameParts[i])
-				nameParts = append(nameParts[:i], nameParts[i+1:]...)
-				nameCommas = append(nameCommas[:i], nameCommas[i+1:]...)
+		for i := len(parsedName.nameParts) - 1; i >= 2; i-- {
+			if parsedName.nameCommas[i] {
+				extraSuffixes = append(extraSuffixes, parsedName.nameParts[i])
+				parsedName.nameParts = append(parsedName.nameParts[:i], parsedName.nameParts[i+1:]...)
+				parsedName.nameCommas = append(parsedName.nameCommas[:i], parsedName.nameCommas[i+1:]...)
 			}
 		}
 	}
 
 	log.Debugf("Founded %v extra suffixes: %v", len(extraSuffixes), extraSuffixes)
-	log.Debug("Cleared commas: ", nameCommas)
+	log.Debug("Cleared commas: ", parsedName.nameCommas)
 
 	return
 }
 
-func findLastname() (lastname string) {
+func (parsedName *ParsedName) findLastname() (lastname string) {
 	log.Debug("Searching lastname")
 
 	commaIndex := -1
-	for i, v := range nameCommas {
+	for i, v := range parsedName.nameCommas {
 		if v {
 			commaIndex = i
 		}
 	}
 
 	if commaIndex == -1 {
-		commaIndex = len(nameParts) - 1
+		commaIndex = len(parsedName.nameParts) - 1
 	}
 
-	lastname = nameParts[commaIndex]
-	nameParts = append(nameParts[:commaIndex], nameParts[commaIndex+1:]...)
-	nameCommas = nameCommas[:0]
+	lastname = parsedName.nameParts[commaIndex]
+	parsedName.nameParts = append(parsedName.nameParts[:commaIndex], parsedName.nameParts[commaIndex+1:]...)
+	parsedName.nameCommas = parsedName.nameCommas[:0]
 
 	log.Debug("Founded lastname: ", lastname)
-	log.Debug("Cleared parts: ", nameParts)
-	log.Debug("Cleared commas: ", nameCommas)
+	log.Debug("Cleared parts: ", parsedName.nameParts)
+	log.Debug("Cleared commas: ", parsedName.nameCommas)
 	return
 }
 
-func findFirstname() (firstname string) {
+func (parsedName *ParsedName) findFirstname() (firstname string) {
 	log.Debug("Searching firstname")
-	firstname = nameParts[0]
-	nameParts = nameParts[1:]
+	firstname = parsedName.nameParts[0]
+	parsedName.nameParts = parsedName.nameParts[1:]
 	log.Debug("Founded firstname: ", firstname)
-	log.Debug("Cleared parts: ", nameParts)
+	log.Debug("Cleared parts: ", parsedName.nameParts)
 	return
 }
 
-func findMiddlename() (middlename string) {
+func (parsedName *ParsedName) findMiddlename() (middlename string) {
 	log.Debug("Searching middlename")
-	middlename = strings.Join(nameParts, " ")
-	nameParts = nameParts[:0]
+	middlename = strings.Join(parsedName.nameParts, " ")
+	parsedName.nameParts = parsedName.nameParts[:0]
 	log.Debug("Founded middlename(s): ", middlename)
-	log.Debug("Cleared parts: ", nameParts)
+	log.Debug("Cleared parts: ", parsedName.nameParts)
 	return
 }
