@@ -8,12 +8,12 @@ import (
 )
 
 type ParsedName struct {
-	Title      string
-	First      string
-	Middle     string
-	Last       string
-	Nick       string
-	Suffix     string
+	Title      string `json:"title,omitempty"`
+	First      string `json:"first,omitempty"`
+	Middle     string `json:"middle,omitempty"`
+	Last       string `json:"last,omitempty"`
+	Nick       string `json:"nick,omitempty"`
+	Suffix     string `json:"suffix,omitempty"`
 	nameParts  []string
 	nameCommas []bool
 	rawName    string
